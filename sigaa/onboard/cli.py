@@ -46,6 +46,7 @@ def register(sub):
     gate.add_argument("--from", dest="source", type=Path, required=True)
     gate.add_argument("--explanations", type=Path, help="JSON feature-to-explanation mapping")
     gate.add_argument("--json", action="store_true")
+    gate.add_argument("--base", help="Git ref for scanning committed changes (default: origin/main)")
     gate.set_defaults(func=run_check, public_without_settings=True)
     report_cmd = commands.add_parser(
         "report", help="write compatibility documentation and a PR body"
@@ -119,7 +120,7 @@ def run_init(args, settings=None):
 def run_check(args, settings=None):
     from .check import check
     explanations = json.loads(args.explanations.read_text()) if args.explanations else None
-    result = check(Path.cwd(), args.source, explanations)
+    result = check(Path.cwd(), args.source, explanations, base_ref=args.base)
     print(json.dumps(result, indent=2))
     return 0 if result["ok"] else 1
 
