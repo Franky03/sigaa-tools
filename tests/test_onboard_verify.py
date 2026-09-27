@@ -213,3 +213,72 @@ def test_live_probe_captures_with_the_requested_institution(tmp_path, monkeypatc
     monkeypatch.delenv("SIGAA_INSTITUTION", raising=False)
     assert cli.main(["onboard", "probe", "--institution", "ufpb"]) == 0
     assert captured == ["ufpb"]
+
+
+@pytest.mark.parametrize("html", [
+    "<p>Cl&aacute;udia</p>", "<p>Cl&#225;udia</p>", "<b>Cl</b>áudia",
+    "<span>Cláudia</span><span>Vieira</span>",
+])
+def test_privacy_gate_recognizes_entities_and_split_names(tmp_path, html):
+    root = _repo(tmp_path)
+    (root / "fixture.html").write_text(html)
+    identity = {"name": "Cláudia Vieira"}
+    findings = privacy_findings(root, identity)
+    assert any(f["category"] == "identity" for f in findings)
+    assert "Cláudia" not in json.dumps(findings, ensure_ascii=False)
+
+
+@pytest.mark.parametrize("encoding", ["latin-1", "cp1252", "utf-16", "utf-32"])
+def test_privacy_gate_recognizes_non_utf8_identity(tmp_path, encoding):
+    root = _repo(tmp_path)
+    (root / "fixture.html").write_bytes("<p>Cláudia Vieira</p>".encode(encoding))
+    assert any(f["category"] == "identity"
+               for f in privacy_findings(root, {"name": "Cláudia Vieira"}))
+
+
+def test_privacy_gate_rejects_malformed_bom_text(tmp_path):
+    root = _repo(tmp_path)
+    (root / "fixture.html").write_bytes(b"\xff\xfe\x01")
+    assert any(f["category"] == "encoding" for f in privacy_findings(root, {}))
+
+
+def _commit(root):
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                    "commit", "-qm", "Test fixture"], cwd=root, check=True)
+
+
+@pytest.mark.parametrize("baseline", [True, False])
+def test_privacy_gate_scans_committed_blob_despite_clean_index(tmp_path, baseline):
+    root = _repo(tmp_path)
+    (root / "README").write_text("base")
+    _commit(root)
+    subprocess.run(["git", "branch", "-M", "fixture-work"], cwd=root, check=True)
+    if baseline:
+        subprocess.run(["git", "branch", "scan-base"], cwd=root, check=True)
+    secret = secrets.token_hex()
+    (root / "fixture.html").write_text(secret)
+    _commit(root)
+    (root / "fixture.html").write_text("sanitized working copy")
+    findings = privacy_findings(root, {"matricula": secret},
+                                base_ref="scan-base" if baseline else None)
+    assert any(f["source"] == "committed" and f["category"] == "identity" for f in findings)
+    assert secret not in json.dumps(findings)
+
+
+def test_privacy_gate_scans_unstaged_changes(tmp_path):
+    root = _repo(tmp_path)
+    (root / "fixture.html").write_text("sanitized")
+    _commit(root)
+    secret = secrets.token_hex()
+    (root / "fixture.html").write_text(secret)
+    assert any(f["source"] == "working" and f["category"] == "identity"
+               for f in privacy_findings(root, {"matricula": secret}))
+
+
+def test_privacy_gate_rejects_missing_explicit_base(tmp_path):
+    root = _repo(tmp_path)
+    (root / "README").write_text("base")
+    _commit(root)
+    with pytest.raises(ValueError, match="base ref"):
+        privacy_findings(root, {}, base_ref="missing-base")

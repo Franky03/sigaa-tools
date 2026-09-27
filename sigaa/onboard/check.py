@@ -8,6 +8,7 @@ from pathlib import Path
 from ..parsers.onboarding import form_secret_values
 
 from ..parsers._common import fold
+from ..parsers.privacy import text_representations
 from .probe import capture_file, probe
 
 _PATTERNS = {
@@ -60,17 +61,54 @@ def _identity_pattern(identity: dict):
     return re.compile("|".join(alternatives)) if alternatives else None
 
 
-def privacy_findings(root: Path, identity: dict):
-    """Scan staged blobs (not just working copies) and untracked source files.
+def _committed_paths(root, base_ref):
+    head = subprocess.run(["git", "rev-parse", "--verify", "HEAD"], cwd=root,
+                          capture_output=True)
+    if head.returncode:
+        return []  # An unborn repository has only staged/untracked content.
+    refs = [base_ref] if base_ref else ["origin/main", "main"]
+    for ref in refs:
+        exists = subprocess.run(["git", "rev-parse", "--verify", ref], cwd=root,
+                                capture_output=True)
+        if exists.returncode:
+            if base_ref:
+                raise ValueError("privacy scan base ref does not exist")
+            continue
+        base = _git(root, "merge-base", ref, "HEAD").decode().strip()
+        return _git(root, "diff", "--name-only", "--diff-filter=ACMR", "-z",
+                    base, "HEAD").split(b"\0")
+    # Without a baseline, scan every committed file instead of skipping it.
+    return _git(root, "ls-tree", "-r", "--name-only", "-z", "HEAD").split(b"\0")
+
+
+def _decode_private_text(content):
+    if content.startswith((b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")):
+        return content.decode("utf-32")
+    if content.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return content.decode("utf-16")
+    try:
+        return content.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            return content.decode("cp1252")
+        except UnicodeDecodeError:
+            return content.decode("latin-1")
+
+
+def privacy_findings(root: Path, identity: dict, base_ref=None):
+    """Scan committed changes, staged blobs, working changes and untracked files.
 
     Findings expose categories and file indices, never matched private values.
     """
     staged = _git(root, "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z")
     staged = staged.split(b"\0")
     untracked = _git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
+    committed = _committed_paths(root, base_ref)
+    working = _git(root, "diff", "--name-only", "--diff-filter=ACMR", "-z").split(b"\0")
     identity_pattern = _identity_pattern(identity)
     findings = []
-    for source, paths in (("staged", staged), ("untracked", untracked)):
+    for source, paths in (("committed", committed), ("staged", staged),
+                          ("working", working), ("untracked", untracked)):
         for index, raw in enumerate(paths):
             if not raw:
                 continue
@@ -83,10 +121,20 @@ def privacy_findings(root: Path, identity: dict):
             if path.is_symlink():
                 findings.append(_finding(source, index, "symlink"))
                 continue
-            content = _git(root, "show", f":{name}") if source == "staged" else path.read_bytes()
-            encoding = "utf-16" if content.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8"
-            text = name + "\n" + content.decode(encoding, "replace")
-            if identity_pattern and identity_pattern.search(fold(text)):
+            if source == "committed":
+                content = _git(root, "show", f"HEAD:{name}")
+            elif source == "staged":
+                content = _git(root, "show", f":{name}")
+            else:
+                content = path.read_bytes()
+            try:
+                text = name + "\n" + _decode_private_text(content)
+            except UnicodeError:
+                findings.append(_finding(source, index, "encoding"))
+                continue
+            representations = text_representations(text)
+            if identity_pattern and any(identity_pattern.search(fold(value))
+                                        for value in representations):
                 findings.append(_finding(source, index, "identity"))
             for value in form_secret_values(text):
                 if value and not re.fullmatch(r"j_id\d+", value):
@@ -101,11 +149,11 @@ def privacy_findings(root: Path, identity: dict):
     return findings
 
 
-def check(root: Path, directory: Path, explanations=None):
+def check(root: Path, directory: Path, explanations=None, base_ref=None):
     identity = json.loads(capture_file(directory, "identity.json").read_text())
     if not all(identity.get(key) for key in ("username", "name", "matricula")):
         return {"ok": False, "error": "private identity.json lacks username, name, or matricula"}
-    findings = privacy_findings(root, identity)
+    findings = privacy_findings(root, identity, base_ref)
     if findings:
         return {"ok": False, "privacy_findings": findings}
     result = probe(directory)
