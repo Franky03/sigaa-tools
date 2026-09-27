@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from bs4 import BeautifulSoup
+from ..parsers.onboarding import form_secret_values
 
 from ..parsers._common import fold
 from ..parsers.privacy import text_representations
@@ -23,7 +23,6 @@ _PATTERNS = {
 
 
 _PRIVATE_SUFFIXES = {".db", ".sqlite3", ".pdf"}
-_FORM_SECRET_FIELDS = 'input[name="javax.faces.ViewState"], input[type="password"]'
 
 
 def _finding(source, index, category):
@@ -137,8 +136,7 @@ def privacy_findings(root: Path, identity: dict, base_ref=None):
             if identity_pattern and any(identity_pattern.search(fold(value))
                                         for value in representations):
                 findings.append(_finding(source, index, "identity"))
-            for node in BeautifulSoup(text, "html.parser").select(_FORM_SECRET_FIELDS):
-                value = str(node.get("value", ""))
+            for value in form_secret_values(text):
                 if value and not re.fullmatch(r"j_id\d+", value):
                     findings.append(_finding(source, index, "form_secret"))
             for candidate in re.findall(r"(?<!\d)\d{11}(?!\d)", text):
