@@ -29,7 +29,8 @@ chat or commit a capture. Only the student can complete live acceptance.
    students' data, cookies and session tokens from every new fixture. Use public
    class names, codes and teacher announcements verbatim.
 7. Stage the intended files, then run `sigaa onboard check --from captures/your_key/<date>`.
-   The gate scans staged blobs and untracked files, runs pytest and Ruff, and
+   The gate scans committed changes, staged blobs, unstaged changes and untracked
+   files, runs pytest and Ruff, and
    rejects unexplained `unrecognized` or `nav_failed` results. A reviewed JSON
    feature-to-reason map can be passed with `--explanations`. Uncaptured features
    remain evidence gaps; a passing gate is not proof of their compatibility.
@@ -63,3 +64,13 @@ fixture. Never work around these conditions or silently select an account.
 Synthetic empty-state fixtures document parser contracts. They do not establish
 what a live institution renders. Capture real empty states before declaring
 compatibility or requesting approval for that institution.
+
+Privacy matching checks raw text, HTML entities decoded to text, and visible
+text with tags removed. UTF-8, UTF-16/32 with a byte-order mark, and legacy
+Windows-1252/Latin-1 text are decoded without replacement characters; malformed
+UTF-16/32 is a finding. Committed changes are compared with the merge base of
+`origin/main` (or local `main` when the remote ref is absent). Use
+`onboard check --base <ref>` to select another baseline. If no default baseline
+exists, all files at HEAD are scanned. A missing explicit baseline is an error.
+Committed and staged blobs are read from Git, so cleaning the working copy does
+not hide private content already present in those versions.
