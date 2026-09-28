@@ -119,7 +119,7 @@ class Settings:
                     return secret
             except Exception:
                 pass
-        return os.environ.get(_secret_env(profile))
+        return os.environ.get(secret_env(profile))
 
     def require_credentials(self) -> tuple[str, str]:
         """Return ``(username, password)`` or raise ``MissingCredentialsError``.
@@ -139,7 +139,7 @@ class Settings:
             secret = "session" if profile.auth_mode == "session" else "password"
             raise MissingCredentialsError(
                 f"missing credentials: no {secret} for account {self.username!r} "
-                f"in the keyring (run `sigaa login`; {_secret_env(profile)} is an "
+                f"in the keyring (run `sigaa login`; {secret_env(profile)} is an "
                 "optional fallback)"
             )
         return self.username, password
@@ -155,5 +155,6 @@ class Settings:
         return None
 
 
-def _secret_env(profile) -> str:
+def secret_env(profile) -> str:
+    """The environment variable that holds the secret when keyring cannot."""
     return "SIGAA_SESSION" if profile.auth_mode == "session" else "SIGAA_PASS"

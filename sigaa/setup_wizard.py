@@ -90,9 +90,9 @@ def verify_and_store_login(
         )
     except Exception:
         password_stored = False
-        secret_env = "SIGAA_SESSION" if get(institution).profile.auth_mode == "session" else "SIGAA_PASS"
         storage_message = (
-            f"keyring unavailable; set SIGAA_USER and {secret_env} in your shell"
+            "keyring unavailable; set SIGAA_USER and "
+            f"{config.secret_env(get(institution).profile)} in your shell"
         )
 
     return LoginResult(
@@ -205,11 +205,13 @@ def build_cron_line(*, sigaa_cmd: str, username: str, institution: str | None = 
     return f"*/30 * * * * SIGAA_USER={user}{selection} {shlex.quote(sigaa_cmd)} sync"
 
 
-def write_env_template(path: Path, *, username: str) -> None:
+def write_env_template(path: Path, *, username: str, institution: str | None = None) -> None:
+    profile = get(institution).profile
+    placeholder = "cookie-header" if profile.auth_mode == "session" else "password"
     path = path.expanduser()
     path.write_text(
         f"SIGAA_USER={username}\n"
-        "SIGAA_PASS=replace-with-your-password\n",
+        f"{config.secret_env(profile)}=replace-with-your-{placeholder}\n",
         encoding="utf-8",
     )
 
@@ -244,11 +246,12 @@ def run_init(
 
     username = settings.username or ""
     if not login.password_stored:
+        secret = config.secret_env(institution)
         print("Keyring is unavailable on this machine.")
-        print("Set SIGAA_PASS in your environment before running network commands.")
-        if _confirm("Write a .env template without the password? [y/N]: ", input_func):
-            write_env_template(Path(".env"), username=username)
-            print("wrote .env template; fill SIGAA_PASS yourself and keep it private")
+        print(f"Set {secret} in your environment before running network commands.")
+        if _confirm("Write a .env template without the secret? [y/N]: ", input_func):
+            write_env_template(Path(".env"), username=username, institution=institution.key)
+            print(f"wrote .env template; fill {secret} yourself and keep it private")
 
     if _confirm("Wire MCP for Claude Code in .mcp.json? [y/N]: ", input_func):
         default_mcp = Path.cwd() / ".mcp.json"
@@ -308,7 +311,7 @@ def _write_schedule(*, username: str, institution: str | None = None) -> None:
         return
     print("Add this cron entry:")
     print(build_cron_line(sigaa_cmd=sigaa_cmd, username=username, institution=institution))
-    print("Password must come from keyring or SIGAA_PASS.")
+    print(f"The secret must come from keyring or {config.secret_env(get(institution).profile)}.")
 
 
 def _print_cheatsheet() -> None:
