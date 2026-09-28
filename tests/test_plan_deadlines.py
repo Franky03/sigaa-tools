@@ -5,7 +5,7 @@ import pytest
 from sigaa.errors import NavigationError
 from sigaa.models import CoursePlan, PlanEvaluation, Turma
 from sigaa.parsers.plano import parse_course_plan
-from sigaa.services.sync import _plan_deadline_id, _slug, _sync_turma_plan
+from sigaa.services.sync import PLAN_SOURCE, _derived_deadline_id, _slug, _sync_turma_plan
 from sigaa.store.db import connect
 from sigaa.store.repository import Repository
 
@@ -42,20 +42,21 @@ def test_slug_normalizes_accents_and_spaces():
 
 
 def test_plan_deadline_ids_are_scoped_to_the_turma():
-    assert _plan_deadline_id(ID_TURMA, _slug("1ª avaliação"), 0) == "plan:369279:1a-avaliacao"
-    assert _plan_deadline_id(OTHER_ID_TURMA, _slug("1ª avaliação"), 0) != _plan_deadline_id(
-        ID_TURMA, _slug("1ª avaliação"), 0
+    slug = _slug("1ª avaliação")
+    assert _derived_deadline_id(PLAN_SOURCE, ID_TURMA, slug, 0) == "plan:369279:1a-avaliacao"
+    assert _derived_deadline_id(PLAN_SOURCE, OTHER_ID_TURMA, slug, 0) != _derived_deadline_id(
+        PLAN_SOURCE, ID_TURMA, slug, 0
     )
 
 
 def test_plan_deadline_id_ignores_the_evaluation_date():
     """A rescheduled evaluation keeps its identity instead of looking brand new."""
-    assert _plan_deadline_id(ID_TURMA, "exame-final", 0) == "plan:369279:exame-final"
+    assert _derived_deadline_id(PLAN_SOURCE, ID_TURMA, "exame-final", 0) == "plan:369279:exame-final"
 
 
 def test_repeated_evaluation_descriptions_get_distinct_ids():
-    first = _plan_deadline_id(ID_TURMA, "reposicao", 0)
-    second = _plan_deadline_id(ID_TURMA, "reposicao", 1)
+    first = _derived_deadline_id(PLAN_SOURCE, ID_TURMA, "reposicao", 0)
+    second = _derived_deadline_id(PLAN_SOURCE, ID_TURMA, "reposicao", 1)
     assert first != second
 
 

@@ -13,6 +13,7 @@ import re
 from bs4 import BeautifulSoup
 
 from ._variants import page_parser
+from .links import inline_link_targets
 
 # jsfcljs(getElementById('<form>'),{'<field>':'<field>','id':'<event>','idTurma':'<turma>'},'')
 _ONCLICK_RE = re.compile(
@@ -68,6 +69,7 @@ def parse_tarefa_body(soup: BeautifulSoup) -> dict | None:
         campo = li.find("div", class_="campo")
         if label and campo:
             key = label.get_text(" ", strip=True).rstrip(":").strip()
+            inline_link_targets(campo)
             fields[key] = campo.get_text(" ", strip=True)
     return fields or None
 

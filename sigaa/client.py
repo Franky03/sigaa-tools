@@ -23,6 +23,7 @@ from .http import AuthError, Session, extract_viewstate
 from .institutions import Capability, MenuLabel, get
 from .models import (
     Attendance,
+    ClassActivity,
     CoursePlan,
     CurriculumStatus,
     Deadline,
@@ -45,6 +46,8 @@ from .parsers import news as news_parser
 from .parsers import participantes as participantes_parser
 from .parsers import portal as portal_parser
 from .parsers import tarefa as tarefa_parser
+from .parsers import tarefa_list as tarefa_list_parser
+from .parsers import topicos as topicos_parser
 from .parsers import transcript as transcript_parser
 
 
@@ -358,6 +361,21 @@ class SigaaClient:
         title = fields.get("Nome da Tarefa") or f"tarefa-{event_id}"
         filename = materials_parser.filename_for(title, content_type, disposition)
         return content, filename
+
+    def list_activity_topics(
+        self, turma: Turma, turma_html: str | None = None
+    ) -> list[ClassActivity]:
+        """Assignments posted as Tópicos de Aula on the Principal page."""
+        self.profile.require(Capability.ACTIVITY_TOPICS)
+        html = turma_html or self.enter_turma(turma)
+        return topicos_parser.parse_activity_topics(html, turma.id_turma)
+
+    def list_tarefas(self, turma: Turma, turma_html: str | None = None) -> list[ClassActivity]:
+        """Every tarefa on the class's Tarefas page, open or closed."""
+        self.profile.require(Capability.TASK_LIST)
+        label = self.profile.menu_labels[MenuLabel.TASK_LIST]
+        html = self._turma_menu_post(turma, label, turma_html)
+        return tarefa_list_parser.parse_tarefa_list(html, turma.id_turma)
 
     def list_materials(self, turma: Turma, turma_html: str | None = None) -> list[Material]:
         self.profile.require(Capability.MATERIALS)

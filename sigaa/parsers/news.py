@@ -19,6 +19,7 @@ from ..errors import ParseError, UnrecognizedPageError
 from ..models import NewsItem
 from ._common import fold as _fold
 from ._common import page_fingerprint
+from .links import inline_link_targets
 
 _PANEL_HEADER_RE = re.compile(r"Not(?:&iacute;|í)cias")
 _JSFCLJS_PARAM_RE = re.compile(r"jsfcljs\([^,]+,\{'([^']+)':'([^']+)'\}")
@@ -92,10 +93,7 @@ def parse_news_body(body_html: str) -> str:
     if container is None:
         raise UnrecognizedPageError("news_body", page_fingerprint(soup))
     target = container
-    for anchor in target.find_all("a", href=True):
-        href = anchor["href"].strip()
-        if href.startswith(("http://", "https://")) and href not in anchor.get_text():
-            anchor.append(f" ({href})")
+    inline_link_targets(target)
     return target.get_text("\n", strip=True)
 
 

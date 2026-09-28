@@ -4,12 +4,13 @@ Idempotent. A news id already in the store is not new, so re-running is safe and
 reports zero new items once caught up.
 
 Every failure is recorded in ``sync_run`` and tagged with a stage (see
-``sigaa.errors``). A class whose news panel cannot be parsed is reported in its
+``sigaa.errors``). A class page that cannot be read is reported in its
 ``ClassSummary`` and fails the run, while the other classes still sync.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from collections import Counter
@@ -21,6 +22,7 @@ from ..errors import NavigationError, error_stage
 from ..institutions import Capability, get
 from ..models import (
     Attendance,
+    ClassActivity,
     Deadline,
     Material,
     NewsItem,
@@ -33,6 +35,11 @@ from ..store.db import connect
 from ..store.repository import Repository
 
 UNTITLED_EVALUATION_SLUG = "avaliacao"
+PLAN_SOURCE = "plan"
+TOPIC_SOURCE = "topico"
+TAREFA_LIST_SOURCE = "tarefa"
+TOPIC_DETAIL = "tópico de aula"
+TAREFA_LIST_DETAIL = "tarefas"
 
 
 @dataclass
@@ -90,17 +97,14 @@ def sync(settings: Settings, fetch_bodies: bool = False) -> SyncResult:
 
             turmas = client.list_turmas()
             result.turma_count = len(turmas)
+            # Stored before the classes, so a class activity the portal already
+            # lists under its SIGAA id is not stored a second time.
+            fresh_portal = [d for d in client.list_deadlines() if repo.upsert_deadline(d)]
             for turma in turmas:
                 result.classes.append(
                     _sync_turma(client, repo, turma, fetch_bodies, result, supported)
                 )
-            summaries = {summary.id_turma: summary for summary in result.classes}
-
-            for deadline in client.list_deadlines():
-                if repo.upsert_deadline(deadline):
-                    result.new_deadlines.append(deadline)
-                    if deadline.id_turma in summaries:
-                        summaries[deadline.id_turma].deadlines_new += 1
+            _count_portal_deadlines(result, fresh_portal)
 
             if Capability.GRADES in supported:
                 grades = client.get_grades()
@@ -145,21 +149,32 @@ def _sync_turma(
 
     fresh_materials = fetch(Capability.MATERIALS, "materials", _sync_turma_materials)
     grade_updates = fetch(Capability.GRADES, "grades", _sync_turma_grades)
-    plan_deadlines = fetch(Capability.PLAN, "plan", _sync_turma_plan)
+    class_deadlines = fetch(Capability.PLAN, "plan", _sync_turma_plan)
+    class_deadlines += fetch(
+        Capability.ACTIVITY_TOPICS, "activity_topics", _sync_turma_activity_topics
+    )
+    class_deadlines += fetch(Capability.TASK_LIST, "task_list", _sync_turma_task_list)
     attendance_updates = fetch(Capability.ATTENDANCE, "attendance", _sync_turma_attendance)
     fetch(Capability.PARTICIPANTS, "professors", _sync_turma_professors)
 
     summary.news_new = len(fresh_news)
     summary.materials_new = len(fresh_materials)
     summary.grades_changed = len(grade_updates)
-    summary.deadlines_new = len(plan_deadlines)
+    summary.deadlines_new = len(class_deadlines)
     summary.attendance_changed = len(attendance_updates)
     result.new_items.extend(fresh_news)
     result.new_materials.extend(fresh_materials)
     result.grade_updates.extend(grade_updates)
-    result.new_deadlines.extend(plan_deadlines)
+    result.new_deadlines.extend(class_deadlines)
     result.attendance_updates.extend(attendance_updates)
     return summary
+
+
+def _count_portal_deadlines(result: SyncResult, fresh_portal: list[Deadline]) -> None:
+    result.new_deadlines.extend(fresh_portal)
+    per_class = Counter(d.id_turma for d in fresh_portal)
+    for summary in result.classes:
+        summary.deadlines_new += per_class[summary.id_turma]
 
 
 def _fail(result: SyncResult, exc: Exception) -> None:
@@ -237,7 +252,7 @@ def _sync_turma_plan(
         occurrence = seen[slug]
         seen[slug] += 1
         deadline = Deadline(
-            id=_plan_deadline_id(turma.id_turma, slug, occurrence),
+            id=_derived_deadline_id(PLAN_SOURCE, turma.id_turma, slug, occurrence),
             id_turma=turma.id_turma,
             kind="avaliacao",
             title=ev.description,
@@ -249,15 +264,88 @@ def _sync_turma_plan(
     return fresh
 
 
-def _plan_deadline_id(id_turma: str, slug: str, occurrence: int) -> str:
-    """Identify a plan evaluation by turma and evaluation, never by its date.
+def _derived_deadline_id(source: str, id_turma: str, slug: str, occurrence: int) -> str:
+    """Identify an item SIGAA lists without an id by turma and title, never by date.
 
-    Teachers reschedule evaluations, so a date in the id turns every move into a
-    brand-new deadline. ``occurrence`` disambiguates a plan that lists the same
-    evaluation description more than once.
+    Teachers reschedule evaluations and activities, so a date in the id turns
+    every move into a brand-new deadline. ``occurrence`` disambiguates a listing
+    that repeats the same title.
     """
     suffix = f":{occurrence}" if occurrence else ""
-    return f"plan:{id_turma}:{slug}{suffix}"
+    return f"{source}:{id_turma}:{slug}{suffix}"
+
+
+def _sync_turma_activity_topics(
+    client: SigaaClient, repo: Repository, turma: Turma, turma_html: str
+) -> list[Deadline]:
+    """Persist assignments posted as Tópicos de Aula."""
+    return _store_activities(
+        repo, TOPIC_SOURCE, client.list_activity_topics(turma, turma_html)
+    )
+
+
+def _sync_turma_task_list(
+    client: SigaaClient, repo: Repository, turma: Turma, turma_html: str
+) -> list[Deadline]:
+    """Persist every row of the class's Tarefas page."""
+    return _store_activities(repo, TAREFA_LIST_SOURCE, client.list_tarefas(turma, turma_html))
+
+
+def _store_activities(
+    repo: Repository, source: str, activities: list[ClassActivity]
+) -> list[Deadline]:
+    """Store class activities, skipping the ones the portal lists under a SIGAA id."""
+    if not activities:
+        return []
+    portal_titles = _portal_event_titles(repo, activities[0].id_turma)
+    fresh: list[Deadline] = []
+    for deadline in _activity_deadlines(source, activities):
+        if _slug(deadline.title) in portal_titles:
+            continue
+        if repo.upsert_deadline(deadline):
+            fresh.append(deadline)
+    return fresh
+
+
+def _activity_deadlines(source: str, activities: list[ClassActivity]) -> list[Deadline]:
+    deadlines: list[Deadline] = []
+    seen: Counter[str] = Counter()
+    for activity in activities:
+        slug = _slug(activity.title) or activity.kind
+        occurrence = seen[slug]
+        seen[slug] += 1
+        deadlines.append(
+            Deadline(
+                id=_derived_deadline_id(source, activity.id_turma, slug, occurrence),
+                id_turma=activity.id_turma,
+                kind=activity.kind,
+                title=activity.title,
+                date=activity.period,
+                detail=_activity_detail(source, activity),
+                body=json.dumps(_activity_fields(activity), ensure_ascii=False),
+            )
+        )
+    return deadlines
+
+
+def _activity_detail(source: str, activity: ClassActivity) -> str:
+    if source == TOPIC_SOURCE:
+        return TOPIC_DETAIL
+    return activity.group or TAREFA_LIST_DETAIL
+
+
+def _activity_fields(activity: ClassActivity) -> dict:
+    """Same shape as a portal tarefa body, so ``get_tarefa_body`` serves both."""
+    return {
+        "Descrição": activity.description,
+        "Período": activity.period,
+        "Links": activity.links,
+    }
+
+
+def _portal_event_titles(repo: Repository, id_turma: str) -> set[str]:
+    """Slugged titles of this class's portal events (the ones with a SIGAA id)."""
+    return {_slug(d.title) for d in repo.get_deadlines(id_turma=id_turma) if d.id.isdigit()}
 
 
 def _sync_turma_attendance(
@@ -300,6 +388,8 @@ _SYNCED = (
     Capability.MATERIALS,
     Capability.GRADES,
     Capability.PLAN,
+    Capability.ACTIVITY_TOPICS,
+    Capability.TASK_LIST,
     Capability.ATTENDANCE,
     Capability.PARTICIPANTS,
 )

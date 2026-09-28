@@ -257,14 +257,34 @@ class CoursePlan:
 class Deadline:
     """An upcoming assessment/task surfaced on the portal turma cards."""
 
-    id: str  # SIGAA's stable event id (dedup key)
+    # Dedup key: SIGAA's event id for portal events; ``<source>:<idTurma>:<slug>``
+    # for items SIGAA lists without one (plan evaluations, topics, Tarefas rows).
+    id: str
     id_turma: str
     kind: str  # avaliacao / tarefa / atividade / ...
     title: str
     date: str  # raw SIGAA date text, e.g. "Ter, 16/06" or "19/05 à 02/06"
     detail: str | None = None  # e.g. "em 10 dias"
-    # JSON of the scraped event detail rows (Descrição, Período, ...), cached on demand.
+    # JSON of the event detail rows (Descrição, Período, ...): cached on demand for
+    # portal events, stored at sync for items whose details are on the listing.
     body: str | None = None
+
+
+@dataclass
+class ClassActivity:
+    """An assignment listed inside a Turma Virtual, with no portal event behind it.
+
+    Comes from a Tópico de Aula titled as an activity, or from a row of the
+    class's Tarefas page. Neither carries a SIGAA id.
+    """
+
+    id_turma: str
+    kind: str  # atividade (Tópico de Aula) / tarefa (Tarefas page)
+    title: str
+    period: str
+    description: str = ""
+    links: list[str] = field(default_factory=list)
+    group: str | None = None  # e.g. "Tarefas Individuais"
 
 
 @dataclass

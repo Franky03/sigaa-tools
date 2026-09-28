@@ -39,9 +39,10 @@ TEST_PASSWORD = secrets.token_urlsafe(16)
 class FakeSigaa:
     """Scripted stand-in for ``SigaaClient`` that serves fixture pages.
 
-    ``pages`` maps a turma id to its Principal page HTML and ``bodies`` maps a
-    news id to its Visualizar page. ``failure`` is raised on first contact, as
-    a login or network problem would be.
+    ``pages`` maps a turma id to its Principal page HTML, ``tarefa_pages`` to its
+    Tarefas page (a declared-empty one by default), and ``bodies`` maps a news id
+    to its Visualizar page. ``portal_deadlines`` are the portal events.
+    ``failure`` is raised on first contact, as a login or network problem would be.
     """
 
     def __init__(self):
@@ -50,7 +51,9 @@ class FakeSigaa:
         self.student = Student(matricula="000", name="ALUNO TESTE")
         self.turmas = []
         self.pages: dict[str, str] = {}
+        self.tarefa_pages: dict[str, str] = {}
         self.bodies: dict[str, str] = {}
+        self.portal_deadlines = []
         self.failure: Exception | None = None
         self.logins: list[tuple[str, str]] = []
 
@@ -98,6 +101,19 @@ class FakeSigaa:
             def list_materials(self, turma, turma_html=None):
                 return []
 
+            def list_activity_topics(self, turma, turma_html=None):
+                from sigaa.parsers import topicos as topicos_parser
+
+                return topicos_parser.parse_activity_topics(turma_html, turma.id_turma)
+
+            def list_tarefas(self, turma, turma_html=None):
+                from sigaa.parsers import tarefa_list as tarefa_list_parser
+
+                html = fake.tarefa_pages.get(turma.id_turma) or (
+                    FIXTURES / "tarefas_empty.html"
+                ).read_text(encoding="utf-8")
+                return tarefa_list_parser.parse_tarefa_list(html, turma.id_turma)
+
             def get_turma_grades(self, turma, turma_html=None):
                 return None
 
@@ -111,7 +127,7 @@ class FakeSigaa:
                 return []
 
             def list_deadlines(self):
-                return []
+                return list(fake.portal_deadlines)
 
             def get_grades(self):
                 return []
