@@ -4,7 +4,7 @@ from typing import Callable
 
 from ..institutions import Capability as C, MenuLabel as M
 from ..parsers import portal, grades, attendance, plano, participantes, materials, news
-from ..parsers import tarefa, matricula, extensao, curriculum
+from ..parsers import tarefa, tarefa_list, topicos, matricula, extensao, curriculum
 
 
 @dataclass(frozen=True)
@@ -100,6 +100,14 @@ FEATURES = (
     ),
     Feature("materials", C.MATERIALS, _principal, materials.parse_materials, needs_turma=True),
     Feature("news", C.NEWS, _principal, news.parse_news_list, needs_turma=True),
+    Feature(
+        "activity_topics", C.ACTIVITY_TOPICS, _principal, topicos.parse_activity_topics,
+        needs_turma=True,
+    ),
+    Feature(
+        "task_list", C.TASK_LIST, _menu(M.TASK_LIST, True), tarefa_list.parse_tarefa_list,
+        needs_turma=True,
+    ),
     Feature("news_body", C.NEWS, _news_body, _parse_news_body, needs_turma=True),
     Feature("task", C.TASKS, _task, tarefa.parse_tarefa_body),
     Feature("matricula", C.MATRICULA, _matricula, matricula.parse_open_turmas, opt_in=True),

@@ -101,7 +101,8 @@ def test_synthetic_empty_contract(feature):
     ("grades", "grades.html"), ("turma_grades", "vernotas.html"),
     ("attendance", "frequencia.html"), ("plan", "plano.html"),
     ("professors", "participantes.html"), ("materials", "materials.html"),
-    ("task", "tarefa.html"),
+    ("task", "tarefa.html"), ("activity_topics", "turma_topicos.html"),
+    ("task_list", "tarefas.html"),
 ])
 def test_page_parsers_build_the_soup_once(feature, fixture, monkeypatch):
     built = []

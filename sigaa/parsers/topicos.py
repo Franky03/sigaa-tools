@@ -9,13 +9,14 @@ page, and its instructions and links live only in ``div.conteudotopico``.
 from __future__ import annotations
 
 import re
-import unicodedata
 
 from bs4 import BeautifulSoup
 
-from ..errors import ParseError
 from ..models import ClassActivity
+from ._common import fold
+from ._variants import page_parser
 from .links import text_and_links
+from .news import news_panel
 
 ACTIVITY_KIND = "atividade"
 
@@ -25,24 +26,31 @@ _REMOTE_LESSON_RE = re.compile(r"\batividade remota\b")
 _ACTIVITY_RE = re.compile(r"\batividades?\b")
 
 
-class TopicParseError(ParseError):
-    pass
+def _is_class_page(soup: BeautifulSoup) -> bool:
+    """Topics, or the Principal page's news panel when a class has no topics yet."""
+    return bool(soup.select("div.topico-aula")) or news_panel(soup) is not None
 
 
-def parse_activity_topics(turma_html: str, id_turma: str) -> list[ClassActivity]:
-    """Lesson topics whose title names an activity, with their text and links.
+def _every_topic_has_a_title(soup: BeautifulSoup) -> bool:
+    """A topic without its heading means the layout changed: skipping it could hide one."""
+    return all(topic.select_one(".titulo") for topic in soup.select("div.topico-aula"))
 
-    A topic block without its ``.titulo`` heading raises ``TopicParseError``:
-    the layout changed, and skipping it could hide an assignment.
-    """
-    soup = BeautifulSoup(turma_html, "lxml")
+
+@page_parser(
+    "activity_topics",
+    _is_class_page,
+    # Most lesson topics are not activities; a class with none is not a failure.
+    empty=lambda soup: True,
+    validate=lambda result, soup: _every_topic_has_a_title(soup),
+    name="class-topic-headings",
+)
+def parse_activity_topics(soup: BeautifulSoup, id_turma: str) -> list[ClassActivity]:
+    """Lesson topics whose title names an activity, with their text and links."""
     activities: list[ClassActivity] = []
     for topic in soup.select("div.topico-aula"):
         heading = topic.select_one(".titulo")
         if heading is None:
-            raise TopicParseError(
-                f"lesson topic without a title on the class page (class {id_turma})"
-            )
+            continue
         title, period = _title_and_period(heading.get_text(" ", strip=True))
         if not _names_an_activity(title):
             continue
@@ -69,7 +77,7 @@ def _title_and_period(heading: str) -> tuple[str, str]:
 
 
 def _names_an_activity(title: str) -> bool:
-    folded = _REMOTE_LESSON_RE.sub(" ", _fold(title))
+    folded = _REMOTE_LESSON_RE.sub(" ", fold(title))
     return bool(_ACTIVITY_RE.search(folded))
 
 
@@ -78,8 +86,3 @@ def _content(topic) -> tuple[str, list[str]]:
     if content is None:
         return "", []
     return text_and_links(content)
-
-
-def _fold(text: str) -> str:
-    ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
-    return ascii_text.casefold()

@@ -110,7 +110,7 @@ class FakeSigaa:
                 from sigaa.parsers import tarefa_list as tarefa_list_parser
 
                 html = fake.tarefa_pages.get(turma.id_turma) or (
-                    FIXTURES / "tarefas_empty.html"
+                    FIXTURES / "task_list_empty.html"
                 ).read_text(encoding="utf-8")
                 return tarefa_list_parser.parse_tarefa_list(html, turma.id_turma)
 

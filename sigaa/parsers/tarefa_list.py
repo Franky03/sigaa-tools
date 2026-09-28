@@ -6,7 +6,7 @@ tarefa carry no SIGAA id, so callers identify them by turma and title.
 
 An empty result is only trusted when SIGAA says so ("Nenhum item foi
 encontrado"). A page without the Tarefas fieldset, or a listing whose rows are
-not recognized, raises ``TarefaListParseError``.
+not recognized, raises ``UnrecognizedPageError``.
 """
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ import re
 
 from bs4 import BeautifulSoup
 
-from ..errors import ParseError
 from ..models import ClassActivity
+from ._variants import page_parser
 from .links import text_and_links
 
 TAREFA_KIND = "tarefa"
@@ -25,27 +25,32 @@ _TAREFAS_LEGEND_RE = re.compile(r"^\s*Tarefas\s*$")
 _EMPTY_LISTING_RE = re.compile(r"Nenhum item foi encontrado", re.I)
 
 
-class TarefaListParseError(ParseError):
-    pass
+def _tarefas_fieldset(soup: BeautifulSoup):
+    legend = soup.find("legend", string=_TAREFAS_LEGEND_RE)
+    return legend.find_parent("fieldset") if legend else None
 
 
-def parse_tarefa_list(html: str, id_turma: str) -> list[ClassActivity]:
-    soup = BeautifulSoup(html, "lxml")
+def _declares_no_tarefas(soup: BeautifulSoup) -> bool:
     fieldset = _tarefas_fieldset(soup)
-    if fieldset is None:
-        raise TarefaListParseError(f"Tarefas page not recognized (class {id_turma})")
+    return bool(fieldset and _EMPTY_LISTING_RE.search(fieldset.get_text(" ", strip=True)))
 
+
+@page_parser(
+    "task_list",
+    lambda soup: _tarefas_fieldset(soup) is not None,
+    empty=_declares_no_tarefas,
+    # A title row without its delivery period is a layout this parser does not know.
+    validate=lambda result, soup: all(tarefa.period for tarefa in result),
+    name="tarefas-listing",
+)
+def parse_tarefa_list(soup: BeautifulSoup, id_turma: str) -> list[ClassActivity]:
     tarefas: list[ClassActivity] = []
-    for table in fieldset.select("table.listing"):
+    for table in _tarefas_fieldset(soup).select("table.listing"):
         group = _group_name(table)
         for row in table.select("tbody > tr"):
             title_cell = _title_cell(row)
             if title_cell is not None:
                 tarefas.append(_tarefa(title_cell, id_turma, group))
-    if not tarefas and not _declares_no_tarefas(fieldset):
-        raise TarefaListParseError(
-            f"Tarefas page has no recognizable rows and no empty-listing notice (class {id_turma})"
-        )
     return tarefas
 
 
@@ -58,14 +63,13 @@ def _title_cell(row):
 
 def _tarefa(title_cell, id_turma: str, group: str | None) -> ClassActivity:
     period_cell = title_cell.find_next_sibling("td")
-    if period_cell is None:
-        raise TarefaListParseError(f"tarefa row without a delivery period (class {id_turma})")
+    period = " ".join(period_cell.get_text(" ", strip=True).split()) if period_cell else ""
     description, links = _description(title_cell.find_parent("tr"))
     return ClassActivity(
         id_turma=id_turma,
         kind=TAREFA_KIND,
         title=title_cell.get_text(" ", strip=True),
-        period=" ".join(period_cell.get_text(" ", strip=True).split()),
+        period=period,
         description=description,
         links=links,
         group=group,
@@ -81,17 +85,8 @@ def _description(title_row) -> tuple[str, list[str]]:
     return text_and_links(cells[0])
 
 
-def _tarefas_fieldset(soup: BeautifulSoup):
-    legend = soup.find("legend", string=_TAREFAS_LEGEND_RE)
-    return legend.find_parent("fieldset") if legend else None
-
-
 def _group_name(table) -> str | None:
     fieldset = table.find_parent("fieldset")
     legend = fieldset.find("legend") if fieldset else None
     name = legend.get_text(" ", strip=True) if legend else ""
     return name if name and not _TAREFAS_LEGEND_RE.match(name) else None
-
-
-def _declares_no_tarefas(fieldset) -> bool:
-    return bool(_EMPTY_LISTING_RE.search(fieldset.get_text(" ", strip=True)))

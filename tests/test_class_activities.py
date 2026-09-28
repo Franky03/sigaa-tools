@@ -9,12 +9,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from bs4 import BeautifulSoup
 
 from conftest import FIXTURES, TEST_PASSWORD, TEST_USERNAME
 from sigaa import config, mcp_server
 from sigaa.config import Settings
-from sigaa.errors import STAGE_PARSE
-from sigaa.models import Deadline
+from sigaa.errors import STAGE_PARSE, UnrecognizedPageError
+from sigaa.institutions import Capability, MenuLabel, ufpb
+from sigaa.models import Deadline, Turma
 from sigaa.parsers import tarefa as tarefa_parser
 from sigaa.parsers import tarefa_list as tarefa_list_parser
 from sigaa.parsers import topicos as topicos_parser
@@ -40,8 +42,8 @@ def _fixture(name: str) -> str:
 
 @pytest.fixture
 def logged_in(clean_credentials):
-    clean_credentials[(config.KEYRING_SERVICE, config.KEYRING_ACTIVE_USERNAME)] = TEST_USERNAME
-    clean_credentials[(config.KEYRING_SERVICE, TEST_USERNAME)] = TEST_PASSWORD
+    clean_credentials[(ufpb.KEYRING_SERVICE, config.KEYRING_ACTIVE_USERNAME)] = TEST_USERNAME
+    clean_credentials[(ufpb.KEYRING_SERVICE, TEST_USERNAME)] = TEST_PASSWORD
 
 
 @pytest.fixture
@@ -78,14 +80,15 @@ def test_lessons_and_remote_lessons_are_not_activities():
     assert not any("Aula" in title for title in titles)
 
 
-def test_topic_without_a_title_raises_a_parse_error():
-    html = _fixture("turma_topicos.html").replace('class="titulo"', 'class="cabecalho"')
+def test_one_topic_without_a_title_makes_the_page_unrecognized():
+    html = _fixture("turma_topicos.html").replace(
+        'class="titulo">Aula 01', 'class="cabecalho">Aula 01'
+    )
 
-    with pytest.raises(topicos_parser.TopicParseError) as excinfo:
+    with pytest.raises(UnrecognizedPageError) as excinfo:
         topicos_parser.parse_activity_topics(html, ID_TURMA)
 
-    assert excinfo.value.stage == STAGE_PARSE
-    assert ID_TURMA in str(excinfo.value)
+    assert (excinfo.value.stage, excinfo.value.feature) == (STAGE_PARSE, "activity_topics")
 
 
 def test_tarefa_list_rows_carry_period_description_and_links():
@@ -98,25 +101,22 @@ def test_tarefa_list_rows_carry_period_description_and_links():
     assert second.links == ["https://www.youtube.com/watch?v=VIDEO-EXEMPLO"]
 
 
-def test_declared_empty_tarefa_list_is_the_only_trusted_empty_result():
-    assert tarefa_list_parser.parse_tarefa_list(_fixture("tarefas_empty.html"), ID_TURMA) == []
+def test_tarefa_list_without_its_empty_notice_is_not_empty():
+    html = _fixture("task_list_empty.html").replace("Nenhum item foi encontrado", "")
 
-
-@pytest.mark.parametrize(
-    "html",
-    [
-        _fixture("tarefas.html").replace('class="listing"', 'class="grid"'),
-        _fixture("tarefas_empty.html").replace("Nenhum item foi encontrado", ""),
-        _fixture("auth_redirect.html"),
-    ],
-    ids=["unrecognized-rows", "no-empty-notice", "not-the-tarefas-page"],
-)
-def test_unrecognized_tarefa_pages_raise_a_parse_error(html):
-    with pytest.raises(tarefa_list_parser.TarefaListParseError) as excinfo:
+    with pytest.raises(UnrecognizedPageError) as excinfo:
         tarefa_list_parser.parse_tarefa_list(html, ID_TURMA)
 
-    assert excinfo.value.stage == STAGE_PARSE
-    assert ID_TURMA in str(excinfo.value)
+    assert (excinfo.value.stage, excinfo.value.feature) == (STAGE_PARSE, "task_list")
+
+
+def test_tarefa_row_without_a_delivery_period_is_unrecognized():
+    soup = BeautifulSoup(_fixture("tarefas.html"), "lxml")
+    title_cell = soup.select_one("td.first")
+    title_cell.find_next_sibling("td").string = ""
+
+    with pytest.raises(UnrecognizedPageError):
+        tarefa_list_parser.parse_tarefa_list(str(soup), ID_TURMA)
 
 
 def test_portal_tarefa_description_keeps_its_link_target():
@@ -190,6 +190,7 @@ def test_unparseable_tarefa_page_fails_the_class_but_keeps_the_rest(teste_de_sof
     assert result.error_stage == STAGE_PARSE
     (issue,) = result.classes[0].errors
     assert issue.stage == STAGE_PARSE
+    assert issue.message == "task_list: unrecognized task_list page"
     assert [d.id for d in result.new_deadlines] == [TOPIC_DEADLINE_ID]
 
 
@@ -260,3 +261,27 @@ def test_a_cached_tarefa_body_survives_a_resync(teste_de_software, tmp_path):
 
     stored = {d.id: d for d in _repo(tmp_path).get_deadlines()}
     assert stored[PORTAL_EVENT_ID].body == '{"Descrição": "cache"}'
+
+
+# --- institutions ----------------------------------------------------------
+
+def test_an_institution_without_these_features_never_fetches_them(fake_sigaa, tmp_path):
+    """UFCG and UFG have not onboarded topics or the Tarefas page: skipped, not failed."""
+    fake_sigaa.add_class(ID_TURMA, CLASS_CODE, "turma_topicos.html")
+    fake_sigaa.tarefa_pages[ID_TURMA] = _fixture("task_list_changed_markup.html")
+    client = fake_sigaa.client_factory()(TEST_USERNAME, TEST_PASSWORD)
+    supported = frozenset(Capability) - {Capability.ACTIVITY_TOPICS, Capability.TASK_LIST}
+    turma = Turma(id_turma=ID_TURMA, name=CLASS_CODE, code=CLASS_CODE)
+
+    summary = sync._sync_turma(
+        client, _repo(tmp_path), turma, False, sync.SyncResult(), supported
+    )
+
+    assert summary.errors == []
+    assert summary.deadlines_new == 0
+    assert _repo(tmp_path).get_deadlines() == []
+
+
+def test_ufpb_declares_both_features_with_the_tarefas_menu_label():
+    assert {Capability.ACTIVITY_TOPICS, Capability.TASK_LIST} <= ufpb.PROFILE.capabilities
+    assert ufpb.PROFILE.menu_labels[MenuLabel.TASK_LIST] == "Tarefas"
