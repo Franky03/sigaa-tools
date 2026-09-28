@@ -93,3 +93,34 @@ def test_sync_json_names_the_skipped_features(partial_institution, monkeypatch, 
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
     assert payload["unsupported"] == ["grades", "plan", "attendance", "participants"]
+
+
+SKIPPED = ["grades", "plan", "attendance", "participants"]
+
+
+def test_watch_summary_names_the_skipped_features(partial_institution, monkeypatch):
+    from sigaa.services import watch
+
+    monkeypatch.setattr(sync_module, "SigaaClient", _client([]))
+
+    watch.run_once(partial_institution, baseline=True)
+    run = watch.run_once(partial_institution)
+
+    assert run.status == watch.STATUS_NO_CHANGES
+    assert run.summary_event()["unsupported"] == SKIPPED
+    assert run.document()["unsupported"] == SKIPPED
+
+
+def test_mcp_sync_names_the_skipped_features(partial_institution, monkeypatch):
+    pytest.importorskip("mcp")
+    from sigaa import mcp_server
+
+    monkeypatch.setattr(sync_module, "SigaaClient", _client([]))
+    monkeypatch.setattr(mcp_server, "run_sync", sync_module.sync)
+    monkeypatch.setenv("SIGAA_INSTITUTION", "ufg")
+    monkeypatch.setenv("SIGAA_DB", str(partial_institution.db_path))
+
+    payload = mcp_server.sigaa_sync()
+
+    assert payload["ok"] is True
+    assert payload["unsupported"] == SKIPPED

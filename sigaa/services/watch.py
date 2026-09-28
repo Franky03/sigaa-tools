@@ -51,6 +51,9 @@ class WatchRun:
     status: str
     events: list[dict] = field(default_factory=list)
     classes: list[dict] = field(default_factory=list)
+    # Features the institution does not declare, so this run never checked
+    # them: ``no_changes`` says nothing about them.
+    unsupported: list[str] = field(default_factory=list)
 
     @property
     def failed(self) -> bool:
@@ -62,6 +65,7 @@ class WatchRun:
             "status": self.status,
             "event_count": len(self.events),
             "classes": self.classes,
+            "unsupported": self.unsupported,
         }
 
     def document(self) -> dict:
@@ -97,7 +101,11 @@ def run_once(
         candidates = _changed_candidates(repo)
         if baseline and not errors:
             repo.save_watch_fingerprints({c.key: c.fingerprint for c in candidates})
-            return WatchRun(status=STATUS_BASELINE, classes=class_summaries(result))
+            return WatchRun(
+                status=STATUS_BASELINE,
+                classes=class_summaries(result),
+                unsupported=result.unsupported,
+            )
 
         detected_at = _timestamp(now)
         events = []
@@ -114,7 +122,12 @@ def run_once(
         status = STATUS_CHANGES
     else:
         status = STATUS_NO_CHANGES
-    return WatchRun(status=status, events=events + errors, classes=class_summaries(result))
+    return WatchRun(
+        status=status,
+        events=events + errors,
+        classes=class_summaries(result),
+        unsupported=result.unsupported,
+    )
 
 
 def _changed_candidates(repo: Repository) -> list[_Candidate]:
