@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from bs4 import BeautifulSoup
 
-from sigaa.errors import ParseError
+from sigaa.errors import ParseError, UnrecognizedPageError
 from sigaa.models import Turma, TurmaGrade
 from sigaa.parsers.grades import parse_turma_grades
 from sigaa.store.db import connect
@@ -62,6 +62,33 @@ def test_a_row_that_does_not_fit_the_header_still_fails():
 
     with pytest.raises(ParseError):
         parse_turma_grades(_report(edit), ID_TURMA)
+
+
+NOT_POSTED = (FIXTURES / "turma_grades_not_posted.html").read_text(encoding="utf-8")
+
+
+def test_notice_that_no_grade_was_posted_is_no_grade():
+    assert parse_turma_grades(NOT_POSTED, ID_TURMA) is None
+
+
+@pytest.mark.parametrize("message", [
+    "Comportamento inesperado do sistema.",
+    "Sua sessão expirou.",
+])
+def test_another_message_in_the_error_panel_still_fails(message):
+    html = NOT_POSTED.replace("Ainda n&#227;o foram lan&#231;adas notas.", message)
+    with pytest.raises(UnrecognizedPageError):
+        parse_turma_grades(html, ID_TURMA)
+
+
+def test_notice_text_outside_the_error_panel_is_not_trusted():
+    def edit(soup):
+        soup.select_one("#painel-erros").attrs["id"] = "outro-painel"
+
+    soup = BeautifulSoup(NOT_POSTED, "lxml")
+    edit(soup)
+    with pytest.raises(UnrecognizedPageError):
+        parse_turma_grades(str(soup), ID_TURMA)
 
 
 def test_turma_grade_store_roundtrip(tmp_path):
