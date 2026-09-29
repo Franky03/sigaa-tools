@@ -285,3 +285,84 @@ def test_provisional_institutions_are_selectable_only_explicitly(monkeypatch):
     replies = iter([""])
     offered = setup_wizard.select_institution(lambda _prompt: next(replies), default="ufcg")
     assert offered.key == "ufpb"
+
+
+def test_session_setup_without_keyring_points_at_sigaa_session(monkeypatch, tmp_path, capsys):
+    from dataclasses import replace
+
+    from sigaa.institutions import get, registry
+    from sigaa.institutions.base import Institution
+
+    ufpb = get("ufpb")
+    session_profile = replace(ufpb.profile, key="example", auth_mode="session")
+    monkeypatch.setitem(
+        registry._PROVIDERS, session_profile.key, Institution(session_profile, ufpb.navigator)
+    )
+    login = setup_wizard.LoginResult(
+        name="ALICE",
+        matricula="00000000000",
+        password_stored=False,
+        storage_message="keyring unavailable",
+        password="JSESSIONID=test",
+    )
+    monkeypatch.setattr(setup_wizard, "_prompt_login_until_ok", lambda *a, **k: login)
+    monkeypatch.setattr(
+        setup_wizard,
+        "sync",
+        lambda settings: SimpleNamespace(ok=True, turma_count=1, new_items=[], error=None),
+    )
+    monkeypatch.setattr("sigaa.setup_wizard.resolve_script", lambda name: "/opt/bin/sigaa")
+    monkeypatch.setattr("sigaa.setup_wizard.platform.system", lambda: "Linux")
+    monkeypatch.chdir(tmp_path)
+
+    replies = iter([
+        "y",  # .env template
+        "n",  # wire MCP
+        "y",  # scheduled sync
+    ])
+    settings = Settings(db_path=tmp_path / "sigaa.db", username="alice", institution="example")
+    assert setup_wizard.run_init(settings, lambda _prompt: next(replies)) == 0
+
+    output = capsys.readouterr().out
+    env = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "SIGAA_PASS" not in output and "SIGAA_PASS" not in env
+    assert "Set SIGAA_SESSION" in output
+    assert "keyring or SIGAA_SESSION" in output
+    assert env.splitlines() == ["SIGAA_USER=alice", "SIGAA_SESSION=replace-with-your-cookie-header"]
+
+
+def test_keyring_failure_message_names_the_session_variable(monkeypatch):
+    from dataclasses import replace
+
+    from sigaa.institutions import get, registry
+    from sigaa.institutions.base import Institution
+
+    ufpb = get("ufpb")
+    session_profile = replace(ufpb.profile, key="example", auth_mode="session")
+    monkeypatch.setitem(
+        registry._PROVIDERS, session_profile.key, Institution(session_profile, ufpb.navigator)
+    )
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return None
+
+        def get_student(self):
+            return SimpleNamespace(name="ALICE", matricula="00000000000")
+
+    def broken(*args):
+        raise RuntimeError("no keyring backend")
+
+    monkeypatch.setitem(sys.modules, "keyring", SimpleNamespace(set_password=broken))
+    monkeypatch.setattr(setup_wizard, "SigaaClient", FakeClient)
+
+    result = setup_wizard.verify_and_store_login("alice", "JSESSIONID=test", institution="example")
+
+    assert result.password_stored is False
+    assert "SIGAA_SESSION" in result.storage_message

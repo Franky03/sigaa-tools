@@ -91,7 +91,8 @@ def verify_and_store_login(
     except Exception:
         password_stored = False
         storage_message = (
-            "keyring unavailable; set SIGAA_USER and SIGAA_PASS in your shell"
+            "keyring unavailable; set SIGAA_USER and "
+            f"{config.secret_env(get(institution).profile)} in your shell"
         )
 
     return LoginResult(
@@ -106,7 +107,15 @@ def verify_and_store_login(
 def prompt_login(settings: Settings, input_func: Callable[[str], str] = input) -> LoginResult:
     if not settings.username:
         settings.username = input_func("SIGAA username: ").strip()
-    password = getpass.getpass("SIGAA password: ")
+    if get(settings.institution).profile.auth_mode == "session":
+        # SSO with reCAPTCHA: the student logs in with a browser; we store the
+        # SIGAA session's Cookie header in place of a password.
+        print("Log in to SIGAA in your browser, then copy the request's whole Cookie value")
+        print("(DevTools > Network > any SIGAA page > Request Headers > Cookie). Keep every")
+        print("cookie in it: the Application tab can miss ones SIGAA needs.")
+        password = getpass.getpass("SIGAA Cookie header: ").strip()
+    else:
+        password = getpass.getpass("SIGAA password: ")
     result = verify_and_store_login(settings.username, password, institution=settings.institution)
     print(f"login ok: {result.name} ({result.matricula}) - {result.storage_message}")
     return result
@@ -196,11 +205,13 @@ def build_cron_line(*, sigaa_cmd: str, username: str, institution: str | None = 
     return f"*/30 * * * * SIGAA_USER={user}{selection} {shlex.quote(sigaa_cmd)} sync"
 
 
-def write_env_template(path: Path, *, username: str) -> None:
+def write_env_template(path: Path, *, username: str, institution: str | None = None) -> None:
+    profile = get(institution).profile
+    placeholder = "cookie-header" if profile.auth_mode == "session" else "password"
     path = path.expanduser()
     path.write_text(
         f"SIGAA_USER={username}\n"
-        "SIGAA_PASS=replace-with-your-password\n",
+        f"{config.secret_env(profile)}=replace-with-your-{placeholder}\n",
         encoding="utf-8",
     )
 
@@ -235,11 +246,12 @@ def run_init(
 
     username = settings.username or ""
     if not login.password_stored:
+        secret = config.secret_env(institution)
         print("Keyring is unavailable on this machine.")
-        print("Set SIGAA_PASS in your environment before running network commands.")
-        if _confirm("Write a .env template without the password? [y/N]: ", input_func):
-            write_env_template(Path(".env"), username=username)
-            print("wrote .env template; fill SIGAA_PASS yourself and keep it private")
+        print(f"Set {secret} in your environment before running network commands.")
+        if _confirm("Write a .env template without the secret? [y/N]: ", input_func):
+            write_env_template(Path(".env"), username=username, institution=institution.key)
+            print(f"wrote .env template; fill {secret} yourself and keep it private")
 
     if _confirm("Wire MCP for Claude Code in .mcp.json? [y/N]: ", input_func):
         default_mcp = Path.cwd() / ".mcp.json"
@@ -299,7 +311,7 @@ def _write_schedule(*, username: str, institution: str | None = None) -> None:
         return
     print("Add this cron entry:")
     print(build_cron_line(sigaa_cmd=sigaa_cmd, username=username, institution=institution))
-    print("Password must come from keyring or SIGAA_PASS.")
+    print(f"The secret must come from keyring or {config.secret_env(get(institution).profile)}.")
 
 
 def _print_cheatsheet() -> None:
