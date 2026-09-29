@@ -81,14 +81,14 @@ Notícia nova:
 Nada mudou:
 
 ```json
-{"type": "sync", "status": "no_changes", "event_count": 0, "classes": [{"class_id": "900001", "class_code": "TEST0001", "news_found": 1, "news_new": 0, "materials_new": 0, "deadlines_new": 0, "grades_changed": 0, "attendance_changed": 0, "errors": []}]}
+{"type": "sync", "status": "no_changes", "event_count": 0, "classes": [{"class_id": "900001", "class_code": "TEST0001", "news_found": 1, "news_new": 0, "materials_new": 0, "deadlines_new": 0, "grades_changed": 0, "attendance_changed": 0, "errors": []}], "unsupported": []}
 ```
 
 Falha:
 
 ```json
 {"type": "error", "status": "failed", "stage": "auth", "message": "missing credentials: no SIGAA account configured (run `sigaa login`, or set SIGAA_USER)", "class_id": null, "class_code": null}
-{"type": "sync", "status": "failed", "event_count": 1, "classes": []}
+{"type": "sync", "status": "failed", "event_count": 1, "classes": [], "unsupported": []}
 ```
 
 | Campo | Significado |
@@ -101,6 +101,7 @@ Falha:
 | `detected_at` | quando o `watch` emitiu o item (UTC) |
 | `stage` | em `error`: `auth`, `network`, `parse` ou `sync` |
 | `classes` | em `sync`: contagens por turma e erros de leitura |
+| `unsupported` | em `sync`: recursos que a instituição não declara e que esta execução não verificou (ex.: `grades`); `no_changes` não vale para eles |
 
 Prazos trazem também `kind` e `due`; materiais, `kind` e `topic`; notas e
 frequência, os valores atuais.
