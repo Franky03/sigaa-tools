@@ -10,6 +10,7 @@ from sigaa.models import Student, Turma
 from sigaa.services import sync as sync_module
 
 PARTIAL = frozenset({Capability.PORTAL, Capability.NEWS, Capability.MATERIALS})
+SKIPPED = ["grades", "plan", "activity_topics", "task_list", "attendance", "participants"]
 NEWS_PAGE = """<html><body><div class="headerBloco">Notícias</div>
 <div class="hidden"></div><div>Não há notícias cadastradas</div></body></html>"""
 
@@ -72,8 +73,9 @@ def test_sync_skips_only_what_the_institution_does_not_declare(partial_instituti
     result = sync_module.sync(partial_institution)
 
     assert result.ok, result.error
-    assert calls == ["enter_turma", "news", "materials", "deadlines"]
-    assert result.unsupported == ["grades", "plan", "attendance", "participants"]
+    # Portal deadlines come first so a class activity they already list is not stored twice.
+    assert calls == ["deadlines", "enter_turma", "news", "materials"]
+    assert result.unsupported == SKIPPED
 
 
 def test_full_institution_reports_nothing_unsupported():
@@ -92,10 +94,7 @@ def test_sync_json_names_the_skipped_features(partial_institution, monkeypatch, 
     cli.main(["--db", str(partial_institution.db_path), "sync", "--json"])
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
-    assert payload["unsupported"] == ["grades", "plan", "attendance", "participants"]
-
-
-SKIPPED = ["grades", "plan", "attendance", "participants"]
+    assert payload["unsupported"] == SKIPPED
 
 
 def test_watch_summary_names_the_skipped_features(partial_institution, monkeypatch):

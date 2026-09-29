@@ -309,14 +309,18 @@ class Repository:
         return {r["id"] for r in rows}
 
     def upsert_deadline(self, item: Deadline) -> bool:
-        """Insert or refresh a deadline. Returns True if it was new."""
+        """Insert or refresh a deadline. Returns True if it was new.
+
+        A deadline without a body keeps the one already cached for it.
+        """
         is_new = item.id not in self.known_deadline_ids()
         self._conn.execute(
-            """INSERT INTO deadline (id, id_turma, kind, title, date, detail, is_new)
-               VALUES (?, ?, ?, ?, ?, ?, 1)
+            """INSERT INTO deadline (id, id_turma, kind, title, date, detail, body, is_new)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 1)
                ON CONFLICT(id) DO UPDATE SET
-                 title=excluded.title, date=excluded.date, detail=excluded.detail""",
-            (item.id, item.id_turma, item.kind, item.title, item.date, item.detail),
+                 title=excluded.title, date=excluded.date, detail=excluded.detail,
+                 body=COALESCE(excluded.body, deadline.body)""",
+            (item.id, item.id_turma, item.kind, item.title, item.date, item.detail, item.body),
         )
         self._conn.commit()
         return is_new

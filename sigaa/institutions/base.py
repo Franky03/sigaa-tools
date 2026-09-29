@@ -22,6 +22,7 @@ class MenuLabel(StrEnum):
     DECLARACAO_VINCULO = "declaracao_vinculo"
     ATESTADO = "atestado"
     EXTENSION_DOCS = "extension_docs"
+    TASK_LIST = "task_list"
 
 
 class Capability(StrEnum):
@@ -34,6 +35,10 @@ class Capability(StrEnum):
     PLAN = "plan"
     PARTICIPANTS = "participants"
     TASKS = "tasks"
+    # Assignments posted as Tópicos de Aula on the class Principal page.
+    ACTIVITY_TOPICS = "activity_topics"
+    # The class's Tarefas page (Turma Virtual > Atividades > Tarefas).
+    TASK_LIST = "task_list"
     CURRICULUM_JSON = "curriculum_json"
     MATRICULA = "matricula"
     EXTENSAO = "extensao"

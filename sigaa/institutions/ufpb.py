@@ -65,6 +65,7 @@ PROFILE = InstitutionProfile(
         MenuLabel.DECLARACAO_VINCULO: "Declaração de vínculo",
         MenuLabel.ATESTADO: "Atestado de matrícula",
         MenuLabel.EXTENSION_DOCS: "Certificados e Declarações",
+        MenuLabel.TASK_LIST: "Tarefas",
     },
     capabilities=frozenset(Capability),
 )
