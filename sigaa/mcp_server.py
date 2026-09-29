@@ -901,6 +901,7 @@ def sigaa_sync(fetch_bodies: bool = False) -> dict:
             {"id": d.id, "date": d.date, "kind": d.kind, "title": d.title}
             for d in result.new_deadlines
         ],
+        "unsupported": result.unsupported,
     }
 
 

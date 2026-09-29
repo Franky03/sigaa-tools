@@ -333,6 +333,7 @@ def test_jsonl_stdout_is_only_json_and_ends_with_a_sync_event(remote_class, tmp_
             "news_found": 1, "news_new": 0, "materials_new": 0, "deadlines_new": 0,
             "grades_changed": 0, "attendance_changed": 0, "errors": [],
         }],
+        "unsupported": [],
     }]
 
 
