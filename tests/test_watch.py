@@ -249,6 +249,27 @@ def test_declared_empty_class_is_no_changes(fake_sigaa, logged_in, tmp_path):
     assert run.classes[0]["news_found"] == 0
 
 
+def test_class_without_posted_grades_keeps_the_run_ok(fake_sigaa, logged_in, tmp_path, monkeypatch):
+    from sigaa.parsers.grades import parse_turma_grades
+    from sigaa.services import sync as sync_module
+
+    fake_sigaa.add_class(REMOTE_ID, REMOTE_CODE, "turma_grades_not_posted.html")
+    client_type = fake_sigaa.client_factory()
+
+    def ver_notas(self, turma, turma_html=None):
+        return parse_turma_grades(turma_html, turma.id_turma)
+
+    monkeypatch.setattr(client_type, "get_turma_grades", ver_notas)
+    monkeypatch.setattr(sync_module, "SigaaClient", client_type)
+
+    result = sync_module.sync(_settings(tmp_path))
+    run = _run(tmp_path)
+
+    assert result.ok, result.error
+    assert all(not c.errors for c in result.classes)
+    assert run.status == watch.STATUS_NO_CHANGES
+
+
 def test_failed_sync_is_recorded_in_the_sync_log(remote_class, tmp_path):
     remote_class.failure = httpx.ReadTimeout("The read operation timed out")
 

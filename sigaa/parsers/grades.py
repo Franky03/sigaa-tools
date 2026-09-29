@@ -104,6 +104,27 @@ def parse_turma_grades(soup: BeautifulSoup, id_turma: str) -> TurmaGrade | None:
     )
 
 
+_GRADES_NOT_POSTED_NOTICE = "ainda nao foram lancadas notas"
+
+
+def _declares_no_grades_posted(soup):
+    """Until the teacher posts a grade, SIGAA answers Ver Notas with the class
+    Principal page and this notice in its error panel (seen live, v26.9.1).
+    Only a panel carrying nothing but this notice is trusted as "no grade"."""
+    panel = soup.select_one("#painel-erros")
+    messages = [fold(li.get_text(" ", strip=True)) for li in panel.select("li")] if panel else []
+    return bool(messages) and all(_GRADES_NOT_POSTED_NOTICE in m for m in messages)
+
+
+def _no_grade_posted(soup, id_turma):
+    return None
+
+
+parse_turma_grades.variants += (
+    Variant("grades-not-posted", _declares_no_grades_posted, _no_grade_posted),
+)
+
+
 def _first_data_row(rows, width: int) -> list[str] | None:
     for row in rows:
         cells = row.find_all("td")
